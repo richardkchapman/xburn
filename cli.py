@@ -143,14 +143,14 @@ parser.add_argument('-br', '--burnrate',  type=int, default=800,
     help='Burning Feed Rate')
 parser.add_argument('-st', '--steps',  type=int, default=255,
     help='Laser PWM Steps')
-parser.add_argument('-hp', '--highpower',  type=int, default=12000,
+parser.add_argument('-hp', '--highpower',  type=int, default=255,
     help='Laser Max Power PWM VAlUE')
-parser.add_argument('-lp', '--lowpower',  type=int, default=0,
+parser.add_argument('-lp', '--lowpower',  type=int, default=3,
     help='Laser Min Power PWM VAlUE')
-parser.add_argument('-on', '--laseron', default="M3",
-    help='Laser ON Gcode Command default: M3')
-parser.add_argument('-off', '--laseroff', default="M5",
-    help='Laser Off Gcode Command default: M5')
+parser.add_argument('-on', '--laseron', default="M106",
+    help='Laser ON Gcode Command default: M06')
+parser.add_argument('-off', '--laseroff', default="M107",
+    help='Laser Off Gcode Command default: M107')
 parser.add_argument('-mod', '--modifier', default="S",
     help='Laser Power Modifier, defaults to Spindle Speed (S)')
 parser.add_argument('-o', '--output',  default="workfile",
