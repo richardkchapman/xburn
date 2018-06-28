@@ -73,7 +73,7 @@ def laserOff():
     appendGcode(args.laseroff)
 
 def laserOn(power):
-    appendGcode(args.modifier + str(power) + " " + args.laseron)
+    appendGcode(args.laseron+ " " + args.modifier + str(power))
 
 #creates a 255x20 black to white gradient for testing settings
 def gradientTest():
@@ -87,28 +87,7 @@ def gradientTest():
 
 def appendGcode(line):
     global lines
-    #Remove any duplicate commands...
-    #optimizing where possible.
-    numlines = len(lines)
-    prefix = line[:2]
-    if len(lines) > 0:
-        if line == lines[numlines-1]:
-            pass
-            #Duplicate gcode found. OMIT
-            #if args.debug:
-            #    print "OMIT DUPLICATE:"  + line
-        elif  prefix == lines[numlines-1][:2] and "Y" not in lines[numlines-1]:
-            lines[numlines-1] = line
-            #if args.debug:
-            #    print "OVERWRITE:"  + line
-        elif args.laseron in line and args.laseroff in lines[numlines-1]:
-            lines[numlines-1] = line
-            #if args.debug:
-            #    print "Keep laser on:"  + line
-        else:
-            lines.append(line)
-    else:
-        lines.append(line)
+    lines.append(line)
 
 #Set laser mode for grbl 1.1
 #Appears this should work? in practice?
@@ -118,6 +97,10 @@ def laserMode(status):
     else:
         appendGcode("$38=0")
 
+def getSpeed(value):
+    """Return the speed we should use to burn this grey value"""
+    value = 255-value  # now 0 is black
+    return int(args.blackburnrate + value*((args.whiteburnrate-args.blackburnrate)/255.0))
 
 #TODO: config profiles so you don't have to mess around.....
 #SERIOUSLY! ^^^^^^^
@@ -139,18 +122,16 @@ parser.add_argument('-de', '--density',  type=float, default=2.0,
     help='Pixels per MM, default 2.0')
 parser.add_argument('-sr', '--skiprate',  type=int, default=3000,
     help='Moving Feed Rate')
-parser.add_argument('-br', '--burnrate',  type=int, default=800,
-    help='Burning Feed Rate')
-parser.add_argument('-st', '--steps',  type=int, default=255,
-    help='Laser PWM Steps')
-parser.add_argument('-hp', '--highpower',  type=int, default=255,
-    help='Laser Max Power PWM VAlUE')
-parser.add_argument('-lp', '--lowpower',  type=int, default=3,
-    help='Laser Min Power PWM VAlUE')
+parser.add_argument('-bbr', '--blackburnrate',  type=int, default=200,
+    help='Burning Feed Rate for black')
+parser.add_argument('-wbr', '--whiteburnrate',  type=int, default=800,
+    help='Burning Feed Rate for white')
 parser.add_argument('-on', '--laseron', default="M106",
-    help='Laser ON Gcode Command default: M06')
+    help='Laser ON Gcode Command default: M106')
 parser.add_argument('-off', '--laseroff', default="M107",
     help='Laser Off Gcode Command default: M107')
+parser.add_argument('-power', '--laserpower', default="255",
+    help='Laser power default: 255')
 parser.add_argument('-mod', '--modifier', default="S",
     help='Laser Power Modifier, defaults to Spindle Speed (S)')
 parser.add_argument('-o', '--output',  default="workfile",
@@ -173,11 +154,6 @@ if not (args.file or args.testpattern):
     parser.print_help()
     #Exit out with no action message
     parser.error('No action requested')
-
-if args.lowpower == 0:
-    args.lowpower = math.ceil(args.highpower/args.steps)
-    if args.debug:
-        print "Low power set to: " + str(args.lowpower)
 
 if args.testpattern:
     gradientTest()
@@ -204,19 +180,24 @@ if args.file:
         pixels = prv.load() # create the pixel map
     #Work in MM
     appendGcode("G21")
+    # Start at current position
+    appendGcode("G92 X0 Y0")
     #Loop over the list
     for y in arr:
         #If we have an even number for a y axis line
         if yp % 2 != 0:
             #Direction is reversed, set xp to the end
-            xp = len(y) - 1
+            xp = len(y)
             #Revese the values of y
             y = list(reversed(y))
             rev = True
         else:
             xp = 0
             rev = False
-        start = False
+        appendGcode(";xp = " + str(xp))
+        appendGcode("G0 X"+str(round(xp*scalex, 3))+" Y" +
+            str(round(yp*scaley, 3)) + " F" + str(args.skiprate))
+        laserOn(args.laserpower)
         #reset the lastxp position
         lastxp = 0
         #Group pixels by value into a new list
@@ -227,37 +208,21 @@ if args.file:
             size = len(items)
             #grey Value in this chunk of the line
             value = items[0]
-            #Make sure this group isn't above the whitevalue
-            if value < args.whitevalue:
-                if start == False:
-                    #Go the start of this line, the first place with a value
-                    appendGcode("G0 X"+str(round(xp*scaley, 3))+" Y" +
-                        str(round(yp*scaley, 3)) + " F" + str(args.skiprate))
-                    start = True
-                else:
-                    appendGcode("G0 X" + str(round(xp*scalex, 3)) +
-                            " F" + str(args.skiprate))
-                #Create the preview
-                if args.preview:
-                    pvx = len(items)-1 if rev else 0
-                    for item in items:
-                        pix = xp-pvx if rev else xp+pvx
-                        pixels[pix,yp] = (item, item, item)
-                        pvx = pvx-1 if rev else pvx+1
-                #Turn on the laser
-                step = (args.highpower-args.lowpower)/args.steps
-                laserOn(math.ceil((args.steps-value)*step))
-                #Burn the segment
-                goto = xp - size if rev else xp + size
-                appendGcode("G1 X" + str(round((goto)*scalex,3)) +
-                    " F" + str(args.burnrate))
-                laserOff()
-            else:
-                #skip the white
-                if xp > 0  and xp < len(y) and lastxp == xp:
-                    goto = xp - size if rev else xp + size
-                    appendGcode("G0 X" + str(round((goto)*scalex,3)) +
-                            " F" + str(args.skiprate))
+            #Create the preview
+            if args.preview:
+                pvx = len(items)-1 if rev else 0
+                for item in items:
+                    pix = xp-pvx-1 if rev else xp+pvx
+                    pixels[pix,yp] = (item, item, item)
+                    pvx = pvx-1 if rev else pvx+1
+            #Turn on the laser
+            #step = (args.highpower-args.lowpower)/args.steps
+            #laserOn(math.ceil((args.steps-value)*step))
+            #Burn the segment
+            goto = xp - size if rev else xp + size
+            appendGcode("G1 X" + str(round((goto)*scalex,3)) +
+                " F" + str(getSpeed(value)))
+            #laserOff()
             #track x position
             lastxp = xp
             #Increment position
@@ -266,7 +231,7 @@ if args.file:
         #Turn the laser off
         laserOff()
     #Go to zero
-    appendGcode("G00 X0 Y0 F" + str(args.skiprate))
+    appendGcode("G0 X0 Y0 F" + str(args.skiprate))
     #if the grbl version allows lasermode, disable it
     if args.grblver > 0.9:
         laserMode(0)
